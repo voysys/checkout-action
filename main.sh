@@ -160,6 +160,8 @@ else
     g retry git checkout --force "${GITHUB_REF}"
 fi
 
+g git clean -fxd
+
 g git config --global --add safe.directory "${wd}"
 
 if [[ "${INPUT_PERSIST_CREDENTIALS}" != "true" ]]; then
