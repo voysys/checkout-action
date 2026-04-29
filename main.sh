@@ -138,15 +138,26 @@ g git config --global --add safe.directory "${wd}"
 g git init
 
 
-GITHUB_PROTOCOL="${GITHUB_SERVER_URL%%://*}"
-GITHUB_HOSTNAME="${GITHUB_SERVER_URL#*://}"
-GIT_USERNAME="dummy"
-
-g git config --global credential.helper store
-echo "${GITHUB_PROTOCOL}://${GIT_USERNAME}:${INPUT_TOKEN}@${GITHUB_HOSTNAME}" >> ~/.git-credentials
-
 g git remote remove origin || true
 g git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+
+# Configure auth via a per-repo http.<url>.extraheader instead of
+# credential.helper=store + ~/.git-credentials. The store helper has two
+# failure modes that break this action on self-hosted runners:
+#   1. ~/.git-credentials is appended to (>>), so any stale entry from a
+#      previous job in the same $HOME mount is read first and rejected.
+#   2. On any auth failure git invokes the helper's `erase` action, which
+#      removes the matching credential from the file, leaving subsequent
+#      retries with no credential at all ("could not read Username").
+# extraheader lives in the repo's .git/config, so it has no cross-job
+# carry-over and is not auto-erased on a transient 401.
+AUTH_BASIC=$(printf 'x-access-token:%s' "${INPUT_TOKEN}" | base64 | tr -d '\n')
+# Mask the derived credential before any line prints it. GitHub Actions
+# auto-masks ${{ github.token }} but not encodings of it, so without this
+# the `g`-style log group below would leak a working basic-auth value.
+echo "::add-mask::${AUTH_BASIC}"
+# Bypass `g` here so the token doesn't end up in the log group header.
+git config --local "http.${GITHUB_SERVER_URL}/.extraheader" "AUTHORIZATION: basic ${AUTH_BASIC}"
 
 g git config --local gc.auto 0
 
@@ -165,5 +176,5 @@ g git clean -fxd
 g git config --global --add safe.directory "${wd}"
 
 if [[ "${INPUT_PERSIST_CREDENTIALS}" != "true" ]]; then
-    rm ~/.git-credentials
+    g git config --local --unset-all "http.${GITHUB_SERVER_URL}/.extraheader" || true
 fi
